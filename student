@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AnvilSpark – Student</title>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+  <style>
+    :root {
+      --primary: #2F3640;
+      --secondary: #F39C12;
+      --accent: #3498DB;
+      --bg: #F5F6FA;
+      --card: #FFFFFF;
+      --radius: 16px;
+      --shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 16px; }
+    .container { max-width: 480px; width: 100%; background: var(--card); padding: 24px; border-radius: var(--radius); box-shadow: var(--shadow); }
+    .brand-header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    .brand-header .spark { font-size: 2rem; color: var(--secondary); }
+    .brand-header h1 { font-size: 1.6rem; font-weight: 700; color: var(--primary); }
+    .brand-header h1 span { color: var(--secondary); }
+    .brand-header .sub { font-size: 0.8rem; color: #6C7A89; margin-top: -4px; }
+    .input-group { margin: 16px 0; }
+    label { font-weight: 600; display: block; margin-bottom: 4px; color: var(--primary); }
+    input, select { width: 100%; padding: 12px; border: 2px solid #E9ECEF; border-radius: 8px; font-size: 1rem; transition: 0.2s; }
+    input:focus, select:focus { border-color: var(--secondary); outline: none; }
+    .btn-checkin { background: var(--secondary); color: white; border: none; padding: 12px; border-radius: 8px; width: 100%; font-size: 1.1rem; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    .btn-checkin:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-checkin:hover:not(:disabled) { background: #D68910; transform: translateY(-1px); }
+    .question { background: #F8F9FA; padding: 16px; border-radius: 8px; margin: 16px 0; border-left: 4px solid var(--secondary); }
+    .options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .option-btn { background: var(--primary); color: white; border: none; padding: 14px; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: 0.2s; }
+    .option-btn:disabled { opacity: 0.5; }
+    .option-btn:hover:not(:disabled) { background: #1E272E; transform: scale(1.02); }
+    .feedback { margin: 12px 0; padding: 10px; border-radius: 8px; text-align: center; font-weight: 600; background: #F8F9FA; }
+    .score { display: flex; justify-content: space-between; margin-top: 16px; background: #F1F3F5; padding: 12px; border-radius: 8px; font-weight: 600; }
+    .score .pts { color: var(--primary); }
+    .score .streak { color: var(--secondary); }
+    .status { text-align: center; color: #6C7A89; font-style: italic; margin: 12px 0; }
+    .pin-badge { text-align: center; font-size: 0.8rem; color: #6C7A89; margin-top: 8px; }
+    @media (max-width: 480px) {
+      .options { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <!-- Brand Header -->
+  <div class="brand-header">
+    <span class="spark">⚡</span>
+    <div>
+      <h1>Anvil<span>Spark</span></h1>
+      <div class="sub">BISCAST · Student</div>
+    </div>
+  </div>
+
+  <div class="input-group">
+    <label for="studentName">Your Name</label>
+    <input type="text" id="studentName" placeholder="Enter your full name">
+    <div style="margin-top:6px;">
+      <small>Or select from roster:</small>
+      <select id="rosterSelect"><option value="">-- Choose --</option></select>
+    </div>
+  </div>
+
+  <button id="checkinBtn" class="btn-checkin" disabled>✅ Check In</button>
+
+  <div id="activityArea" style="display:none;">
+    <div class="question" id="activityDisplay">Loading...</div>
+    <div class="options" id="optionsContainer"></div>
+    <div id="feedback" class="feedback"></div>
+  </div>
+
+  <div class="score" id="scoreDisplay" style="display:none;">
+    <div class="pts">⭐ <span id="totalPoints">0</span> pts</div>
+    <div class="streak">🔥 Streak: <span id="streakCount">0</span></div>
+  </div>
+
+  <div id="statusMessage" class="status">Waiting for activity...</div>
+  <div class="pin-badge">Room: <span id="pinDisplay">----</span></div>
+</div>
+
+<script>
+  // ---------- CONFIG ----------
+  const CONFIG = {
+    ENDPOINT: "https://script.google.com/macros/s/YOUR_APPS_SCRIPT_WEB_APP_URL/exec"
+  };
+  const FIREBASE_CONFIG = {
+    apiKey: "YOUR_API_KEY",
+    databaseURL: "https://YOUR_PROJECT.firebaseio.com"
+  };
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const db = firebase.database();
+
+  const params = new URLSearchParams(window.location.search);
+  const pin = params.get('pin');
+  if (!pin) {
+    document.body.innerHTML = '<h1 style="color:red;">Missing PIN. Use ?pin=XXXX</h1>';
+    throw new Error('No PIN');
+  }
+  document.getElementById('pinDisplay').textContent = pin;
+
+  // ---------- DOM refs ----------
+  const nameInput = document.getElementById('studentName');
+  const rosterSelect = document.getElementById('rosterSelect');
+  const checkinBtn = document.getElementById('checkinBtn');
+  const activityArea = document.getElementById('activityArea');
+  const activityDisplay = document.getElementById('activityDisplay');
+  const optionsContainer = document.getElementById('optionsContainer');
+  const feedback = document.getElementById('feedback');
+  const totalPointsSpan = document.getElementById('totalPoints');
+  const streakSpan = document.getElementById('streakCount');
+  const statusMsg = document.getElementById('statusMessage');
+  const scoreDisplay = document.getElementById('scoreDisplay');
+
+  let currentStudent = '';
+  let answered = false;
+
+  // ---------- Helpers ----------
+  async function callAppsScript(action, params = {}) {
+    const body = JSON.stringify({ action, ...params });
+    const resp = await fetch(CONFIG.ENDPOINT, {
+      method: 'POST',
+      mode: 'cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: body
+    });
+    return resp.json();
+  }
+
+  // ---------- Load Roster ----------
+  async function loadRoster() {
+    const resp = await fetch(`${CONFIG.ENDPOINT}?action=getRoster&pin=${pin}`, { mode: 'cors' });
+    const data = await resp.json();
+    if (data.success && data.names) {
+      rosterSelect.innerHTML = '<option value="">-- Choose --</option>';
+      data.names.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        rosterSelect.appendChild(opt);
+      });
+    }
+  }
+  loadRoster();
+
+  // ---------- Name input and check-in button ----------
+  function updateCheckinButton() {
+    currentStudent = nameInput.value.trim();
+    checkinBtn.disabled = !currentStudent;
+    if (currentStudent) {
+      document.querySelectorAll('.option-btn').forEach(b => b.disabled = false);
+    }
+  }
+
+  nameInput.addEventListener('input', updateCheckinButton);
+  rosterSelect.addEventListener('change', function() {
+    if (this.value) {
+      nameInput.value = this.value;
+      updateCheckinButton();
+    }
+  });
+
+  // ---------- Check-in ----------
+  checkinBtn.addEventListener('click', async function() {
+    if (!currentStudent) return alert('Enter your name first.');
+    this.disabled = true;
+    this.textContent = '⏳ Checking in...';
+    const result = await callAppsScript('checkIn', { pin, studentName: currentStudent });
+    this.textContent = result.success ? '✅ Checked In!' : '❌ Error';
+    if (!result.success) alert('Error: ' + result.error);
+    setTimeout(() => { this.textContent = '✅ Check In'; this.disabled = false; }, 2000);
+  });
+
+  // ---------- Subscribe to Quiz and Poll ----------
+  const quizRef = db.ref(`rooms/${pin}/quiz`);
+  const pollRef = db.ref(`rooms/${pin}/poll`);
+
+  // Priority: quiz > poll
+  quizRef.on('value', snapshot => {
+    const state = snapshot.val();
+    if (state && state.status === 'active') {
+      showQuiz(state);
+    } else {
+      // Check poll
+      pollRef.once('value', pollSnap => {
+        const pollState = pollSnap.val();
+        if (pollState && pollState.status === 'active') {
+          showPoll(pollState);
+        } else {
+          activityArea.style.display = 'none';
+          scoreDisplay.style.display = 'none';
+          statusMsg.textContent = '⏳ No active activity. Check in or wait.';
+        }
+      });
+    }
+  });
+
+  function showQuiz(state) {
+    activityArea.style.display = 'block';
+    scoreDisplay.style.display = 'block';
+    statusMsg.textContent = '🔴 Quiz active!';
+    const q = state.currentQuestion;
+    activityDisplay.innerHTML = `<strong>${q.text}</strong>`;
+    optionsContainer.innerHTML = '';
+    ['A','B','C','D'].forEach(letter => {
+      const btn = document.createElement('button');
+      btn.className = 'option-btn';
+      btn.textContent = `${letter}. ${q.options[letter]}`;
+      btn.dataset.letter = letter;
+      btn.disabled = answered || !currentStudent;
+      btn.addEventListener('click', function() {
+        if (answered || !currentStudent) return;
+        submitQuizAnswer(letter);
+      });
+      optionsContainer.appendChild(btn);
+    });
+    // Update score
+    if (state.studentScores && currentStudent) {
+      const myScore = state.studentScores[currentStudent];
+      if (myScore) {
+        totalPointsSpan.textContent = myScore.total || 0;
+        streakSpan.textContent = myScore.streak || 0;
+      }
+    }
+  }
+
+  function showPoll(state) {
+    activityArea.style.display = 'block';
+    scoreDisplay.style.display = 'none';
+    statusMsg.textContent = '📊 Poll active!';
+    activityDisplay.innerHTML = `<strong>${state.question}</strong>`;
+    optionsContainer.innerHTML = '';
+    state.options.forEach(opt => {
+      const btn = document.createElement('button');
+      btn.className = 'option-btn';
+      btn.textContent = opt;
+      btn.dataset.option = opt;
+      btn.disabled = answered || !currentStudent;
+      btn.addEventListener('click', function() {
+        if (answered || !currentStudent) return;
+        submitPollVote(opt);
+      });
+      optionsContainer.appendChild(btn);
+    });
+  }
+
+  // ---------- Submit quiz answer ----------
+  function submitQuizAnswer(letter) {
+    if (!currentStudent) { alert('Enter your name first.'); return; }
+    answered = true;
+    document.querySelectorAll('.option-btn').forEach(b => b.disabled = true);
+    const ansRef = db.ref(`rooms/${pin}/quiz/answers/${currentStudent}`);
+    ansRef.set({
+      option: letter,
+      timestamp: Date.now()
+    }).then(() => {
+      feedback.innerHTML = '✅ Answer submitted!';
+    }).catch(err => {
+      feedback.innerHTML = '❌ Error. Try again.';
+      answered = false;
+      document.querySelectorAll('.option-btn').forEach(b => b.disabled = false);
+    });
+  }
+
+  // ---------- Submit poll vote ----------
+  function submitPollVote(option) {
+    if (!currentStudent) { alert('Enter your name first.'); return; }
+    answered = true;
+    document.querySelectorAll('.option-btn').forEach(b => b.disabled = true);
+    const voteRef = db.ref(`rooms/${pin}/poll/votes/${currentStudent}`);
+    voteRef.set(option).then(() => {
+      feedback.innerHTML = '✅ Vote recorded!';
+    }).catch(err => {
+      feedback.innerHTML = '❌ Error. Try again.';
+      answered = false;
+      document.querySelectorAll('.option-btn').forEach(b => b.disabled = false);
+    });
+  }
+
+  // Prefill name from URL
+  const urlName = params.get('name');
+  if (urlName) {
+    nameInput.value = urlName;
+    updateCheckinButton();
+  }
+</script>
+</body>
+</html>
