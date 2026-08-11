@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AnvilSpark – Projection</title>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1"></script>
+  <style>
+    :root {
+      --primary: #2F3640;
+      --secondary: #F39C12;
+      --bg: #1A1A2E;
+      --card: #16213E;
+      --text: #FFFFFF;
+      --radius: 16px;
+    }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 16px; }
+    .container { max-width: 1400px; width: 100%; }
+    .brand-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--primary);
+      padding: 12px 24px;
+      border-radius: var(--radius) var(--radius) 0 0;
+      margin-bottom: 0;
+    }
+    .brand-bar .brand { display: flex; align-items: center; gap: 10px; font-size: 1.8rem; font-weight: 700; }
+    .brand-bar .brand .spark { color: var(--secondary); }
+    .brand-bar .brand span { color: var(--secondary); }
+    .brand-bar .pin-badge { background: var(--secondary); color: #1E272E; padding: 4px 16px; border-radius: 20px; font-weight: 700; }
+    .question-box { background: var(--card); padding: 30px; border-radius: var(--radius); margin: 16px 0; text-align: center; }
+    .question-text { font-size: 2.8rem; font-weight: 700; }
+    .options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+    .option { background: #0F3460; padding: 20px; border-radius: 12px; font-size: 1.5rem; border-left: 4px solid var(--secondary); }
+    .chart-container { background: var(--card); padding: 20px; border-radius: var(--radius); margin: 16px 0; }
+    .leaderboard { background: var(--card); padding: 20px; border-radius: var(--radius); margin: 16px 0; }
+    .leaderboard ol { padding-left: 20px; font-size: 1.2rem; }
+    .leaderboard li { margin: 8px 0; }
+    .streak-badge { background: var(--secondary); color: #1E272E; border-radius: 12px; padding: 2px 12px; margin-left: 10px; font-weight: 700; }
+    .status-badge { position: fixed; top: 20px; right: 20px; background: var(--secondary); color: #1E272E; padding: 8px 20px; border-radius: 20px; font-weight: 700; }
+    .group-display { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; margin-top: 20px; }
+    .group-box { background: var(--card); padding: 20px; border-radius: 12px; min-width: 180px; border: 2px solid var(--secondary); }
+    .group-box h3 { color: var(--secondary); margin: 0 0 8px 0; }
+    .section-title { display: flex; align-items: center; gap: 12px; margin-top: 32px; }
+    .section-title .spark { color: var(--secondary); }
+    @media (max-width: 768px) {
+      .question-text { font-size: 1.8rem; }
+      .options { grid-template-columns: 1fr; }
+      .brand-bar { flex-direction: column; align-items: flex-start; gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <!-- Brand Bar -->
+  <div class="brand-bar">
+    <div class="brand">
+      <span class="spark">⚡</span>
+      Anvil<span>Spark</span>
+    </div>
+    <div class="pin-badge" id="pinDisplay">PIN: ----</div>
+  </div>
+
+  <div id="statusBadge" class="status-badge">⏳ Waiting</div>
+
+  <!-- Quiz Section -->
+  <div class="question-box">
+    <div id="questionText" class="question-text">📢 Question will appear here</div>
+    <div id="optionsContainer" class="options"></div>
+  </div>
+  <div class="chart-container">
+    <canvas id="projectionChart"></canvas>
+  </div>
+  <div class="leaderboard">
+    <h2 style="display:flex; align-items:center; gap:12px;"><span class="spark">🏆</span> Leaderboard</h2>
+    <ol id="leaderboardList"><li>Waiting for answers...</li></ol>
+  </div>
+
+  <!-- Poll Section -->
+  <div id="pollSection" style="display:none;">
+    <div class="section-title"><span class="spark">📊</span> <h2>Poll Results</h2></div>
+    <div class="chart-container"><canvas id="pollProjectionChart"></canvas></div>
+    <div id="pollVoteCounts" style="text-align:center; font-size:1.2rem;"></div>
+  </div>
+
+  <!-- Groups Section -->
+  <div id="groupsSection" style="display:none;">
+    <div class="section-title"><span class="spark">👥</span> <h2>Groups</h2></div>
+    <div id="groupsContainer" class="group-display"></div>
+  </div>
+</div>
+
+<script>
+  // ---------- CONFIG ----------
+  const FIREBASE_CONFIG = {
+    apiKey: "YOUR_API_KEY",
+    databaseURL: "https://YOUR_PROJECT.firebaseio.com"
+  };
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const db = firebase.database();
+
+  const params = new URLSearchParams(window.location.search);
+  const pin = params.get('pin');
+  if (!pin) {
+    document.body.innerHTML = '<h1 style="color:red;">Missing ?pin=XXXX in URL</h1>';
+    throw new Error('No PIN');
+  }
+  document.getElementById('pinDisplay').textContent = `PIN: ${pin}`;
+
+  // ---------- Quiz Listener ----------
+  const quizRef = db.ref(`rooms/${pin}/quiz`);
+  let chart = null;
+  const ctx = document.getElementById('projectionChart').getContext('2d');
+  let lastFiredStreak = 0;
+
+  quizRef.on('value', snapshot => {
+    const state = snapshot.val();
+    if (!state) {
+      document.getElementById('statusBadge').textContent = '⏳ Waiting';
+      return;
+    }
+    document.getElementById('statusBadge').textContent = state.status === 'active' ? '🔴 LIVE' : (state.status === 'closed' ? '✅ Closed' : '⏳ Waiting');
+    if (state.currentQuestion) {
+      const q = state.currentQuestion;
+      document.getElementById('questionText').textContent = q.text;
+      document.getElementById('optionsContainer').innerHTML = ['A','B','C','D'].map(letter => 
+        `<div class="option">${letter}. ${q.options[letter]}</div>`
+      ).join('');
+    }
+    if (state.answers) {
+      updateChart(state.answers);
+    }
+    if (state.leaderboard && state.leaderboard.length > 0) {
+      const list = document.getElementById('leaderboardList');
+      list.innerHTML = state.leaderboard.slice(0,10).map((p, idx) => 
+        `<li>${idx+1}. ${p.name} – ${p.points} pts <span class="streak-badge">🔥${p.streak}</span></li>`
+      ).join('');
+      const maxStreak = state.leaderboard.reduce((max, p) => Math.max(max, p.streak || 0), 0);
+      if (maxStreak >= 5 && maxStreak !== lastFiredStreak) {
+        confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+        lastFiredStreak = maxStreak;
+      }
+    }
+  });
+
+  function updateChart(answers) {
+    const counts = { A:0, B:0, C:0, D:0 };
+    for (const [student, ans] of Object.entries(answers)) {
+      const opt = ans.option.toUpperCase();
+      if (counts.hasOwnProperty(opt)) counts[opt]++;
+    }
+    const labels = ['A', 'B', 'C', 'D'];
+    const data = labels.map(l => counts[l]);
+    if (chart) {
+      chart.data.datasets[0].data = data;
+      chart.update();
+    } else {
+      chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Votes',
+            data: data,
+            backgroundColor: ['#4e79a7','#f28e2b','#e15759','#59a14f']
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: 'white' } } },
+          scales: { y: { ticks: { color: 'white' } }, x: { ticks: { color: 'white' } } }
+        }
+      });
+    }
+  }
+
+  // ---------- Poll Listener ----------
+  const pollRef = db.ref(`rooms/${pin}/poll`);
+  let pollChartInstance = null;
+  pollRef.on('value', snapshot => {
+    const state = snapshot.val();
+    if (!state || state.status === 'closed') {
+      document.getElementById('pollSection').style.display = 'none';
+      return;
+    }
+    if (state.status === 'active') {
+      document.getElementById('pollSection').style.display = 'block';
+      const votes = state.votes || {};
+      const options = state.options || [];
+      const counts = options.map(opt => votes[opt] || 0);
+      const ctxPoll = document.getElementById('pollProjectionChart').getContext('2d');
+      if (pollChartInstance) {
+        pollChartInstance.data.datasets[0].data = counts;
+        pollChartInstance.update();
+      } else {
+        pollChartInstance = new Chart(ctxPoll, {
+          type: 'bar',
+          data: {
+            labels: options,
+            datasets: [{
+              label: 'Votes',
+              data: counts,
+              backgroundColor: ['#4e79a7','#f28e2b','#e15759','#59a14f']
+            }]
+          },
+          options: { responsive: true, maintainAspectRatio: false }
+        });
+      }
+      document.getElementById('pollVoteCounts').innerHTML = options.map(opt => `${opt}: ${votes[opt] || 0}`).join(' | ');
+    }
+  });
+
+  // ---------- Groups Listener ----------
+  const groupsRef = db.ref(`rooms/${pin}/groups`);
+  groupsRef.on('value', snapshot => {
+    const groups = snapshot.val();
+    if (!groups || groups.length === 0) {
+      document.getElementById('groupsSection').style.display = 'none';
+      return;
+    }
+    document.getElementById('groupsSection').style.display = 'block';
+    const container = document.getElementById('groupsContainer');
+    container.innerHTML = '';
+    groups.forEach((group, idx) => {
+      const div = document.createElement('div');
+      div.className = 'group-box';
+      div.innerHTML = `<h3>Group ${idx+1}</h3><p>${group.join(', ')}</p>`;
+      container.appendChild(div);
+    });
+  });
+</script>
+</body>
+</html>
